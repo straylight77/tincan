@@ -11,6 +11,7 @@ class ChatServer():
         self.buf_size = 4096
         self.max_clients = 10
         self.socket_list = [ ]
+        self.clients = [ ]
 
 
     def start(self):
@@ -54,29 +55,41 @@ class ChatServer():
                             self.do_command(sock, data_str)
                         else:
                             # chat message
-                            msg = f"\r[{sock.getpeername()}] {data_str}"
+                            name = self.get_socket_name(sock)
+                            msg = f"\r[{self.get_socket_name(sock)}] {data_str}"
                             self.broadcast(sock, msg)
                     else:
                         #remove the socket that's broken
                         self.remove_client(sock)
 
 
-    def do_command(self, sockfd, message):
-        commands = message[1:].strip().split()
-        self.log(f"command '{commands[0]}' from {sockfd.getpeername()}")
-
+    def get_socket_name(self, sock):
+        p = sock.getpeername()
+        return f"{p[0]}:{p[1]}"
 
 
     def add_client(self, sockfd, addr):
         self.socket_list.append(sockfd)
-        self.broadcast(sockfd, f"new client connected from {addr}\n")
+        self.clients.append(sockfd)
+        name = self.get_socket_name(sockfd)
+        self.broadcast(sockfd, f"\r> new connection {name}\n")
 
 
     def remove_client(self, socket):
-        self.broadcast(socket, f"client [{socket.getpeername()}] is offline\n")
+        name = self.get_socket_name(socket)
+        self.broadcast(socket, f"\r> connection {name} dropped\n")
         if socket in self.socket_list:
             self.socket_list.remove(socket)
+            self.clients.remove(socket)
         socket.close()
+
+
+    def send(self, sockfd, message):
+        try:
+            sockfd.send(message.encode('utf-8'))
+        except Exception as e:
+            self.log(f"!error: {e}")
+            self.remove_client(s)
 
 
     def broadcast(self, sender_socket, message):
@@ -86,12 +99,42 @@ class ChatServer():
                 try:
                     s.send(message.encode('utf-8'))
                 except Exception as e:
-                    self.log(f"error: {e}")
+                    self.log(f"!error: {e}")
                     self.remove_client(s)
 
 
     def log(self, msg):
-        print(msg.rstrip())
+        print(msg.strip())
+
+
+    def do_command(self, sockfd, message):
+        cmd = message[1:].strip().split()
+        self.log(f"/{cmd[0]} from {sockfd.getpeername()}")
+
+        if cmd[0] in ("help", "who"):
+            try:
+                # dynamically call a function based on the command name
+                method_name = "do_" + cmd[0]
+                func = getattr(self, method_name)
+                func(sockfd, cmd[1:])
+            except AttributeError as e:
+                self.log(f"!error: {e}")
+                self.send(sockfd, f"\r> sorry, '{cmd[0]}' is not implemented.\n")
+
+        else:
+            self.send(sockfd, f"\r> sorry, '{cmd[0]}' is not implemented.\n")
+
+
+    def do_who(self, sockfd, args):
+        #self.send(sockfd, f"\r> who\n")
+        msg = "\r> Currently connected:\n"
+        for s in self.clients:
+            msg += f">  {self.get_socket_name(s)}"
+            if s == sockfd:
+                msg += " (you)"
+            msg += "\n"
+
+        self.send(sockfd, msg)
 
 
 
